@@ -53,19 +53,19 @@
   </style>
 </head>
 <body>
-
-
+ 
+ 
 <div id="sidebar">
   <h2>Nodos en la red</h2>
-  <div style="padding:16px;border-bottom:1px solid #eee;">
+  <div style="padding:16px;border-bottom:1px solid #95b6d7;">
     <input type="text" id="peer-input" placeholder="IP:puerto (ej: 192.168.1.100:12345)" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;" />
     <button onclick="connectPeer()" style="width:100%;padding:8px;background:#185FA5;color:#fff;border:none;border-radius:4px;cursor:pointer;">Conectar a Peer</button>
   </div>
   <div id="node-list"></div>
   <div id="my-id">Mi nodo: <strong>{{ node_id }}</strong></div>
 </div>
-
-
+ 
+ 
 <div id="chat-panel">
   <div id="chat-header">
     <button id="back-btn" onclick="clearSelection()">&#8592;</button>
@@ -74,19 +74,19 @@
       <p id="chat-subtitle">Haz clic en un nodo de la lista para chatear</p>
     </div>
   </div>  <!-- ← cierre de chat-header -->
-
-
+ 
+ 
   <div id="chat-box">
     <div id="no-selection">← Elige un nodo para iniciar una conversación</div>
   </div>
-
-
+ 
+ 
   <div id="chat-input-row">
     <input type="text" id="msg-input" placeholder="Escribe un mensaje..." disabled />
     <button id="send-btn" onclick="sendMsg()" disabled>Enviar</button>
   </div>
-
-
+ 
+ 
   <div id="video-section" style="padding:16px;border-top:1px solid #eee;background:#fafafa;">
     <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
       <button id="start-call-btn" onclick="startCall()" style="padding:8px 16px;background:#0f6e56;color:#fff;border:none;border-radius:8px;cursor:pointer;">Iniciar videollamada</button>
@@ -105,34 +105,38 @@
     </div>
   </div>
 </div>  
-
-
+ 
+ 
 <script>
   let activeNode = null;
   let allMessages = [];
   let localStream = null;
   let peerConnection = null;
   let currentCallTarget = null;
+  let activeHostname = '';
+  let localTypingSent = false;
+  let typingStopTimer = null;
+  let remoteTypingTimer = null;
   const nodeId = "{{ node_id }}";
   const messagePollPeriod = 350;
   const nodePollPeriod = 2000;
   const signalPollPeriod = 1500;
   const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
-
-
+ 
+ 
   async function loadNodes() {
     const res = await fetch('/nodes/');
     const data = await res.json();
     const list = document.getElementById('node-list');
     const nodes = Object.values(data.nodes);
-
-
+ 
+ 
     if (nodes.length === 0) {
       list.innerHTML = '<div style="padding:16px;font-size:12px;color:#aaa;">Buscando nodos...</div>';
       return;
     }
-
-
+ 
+ 
     list.innerHTML = nodes.map(n => `
       <div class="node-item ${activeNode === n.node_id ? 'active' : ''}"
           data-id="${n.node_id}"
@@ -149,18 +153,31 @@
           : ''}
       </div>
     `).join('');
-
-
+ 
+ 
     document.querySelectorAll('.node-item').forEach(el => {
       el.addEventListener('click', () => {
         selectNode(el.dataset.id, el.dataset.host, el.dataset.load);
       });
     });
   }
-
-
+ 
+ 
   function clearSelection() {
+    if (localTypingSent && activeNode) {
+      sendSignal('typing', activeNode, { typing: false });
+      localTypingSent = false;
+    }
+    if (typingStopTimer) {
+      clearTimeout(typingStopTimer);
+      typingStopTimer = null;
+    }
+    if (remoteTypingTimer) {
+      clearTimeout(remoteTypingTimer);
+      remoteTypingTimer = null;
+    }
     activeNode = null;
+    activeHostname = '';
     document.getElementById('chat-title').textContent = 'Selecciona un nodo';
     document.getElementById('chat-subtitle').textContent = 'Haz clic en un nodo de la lista para chatear';
     document.getElementById('msg-input').disabled = true;
@@ -170,12 +187,27 @@
       '<div id="no-selection" style="flex:1;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:14px;">← Elige un nodo para iniciar una conversación</div>';
     loadNodes();
   }
+ 
+ 
+  function updateChatSubtitle(isTyping) {
+    const subtitle = document.getElementById('chat-subtitle');
+    if (!activeNode) {
+      subtitle.textContent = 'Haz clic en un nodo de la lista para chatear';
+      return;
+    }
+    if (isTyping) {
+      subtitle.textContent = 'Escribiendo...';
+      return;
+    }
+    subtitle.textContent = activeHostname || 'Conversacion activa';
+  }
 
 
   function selectNode(nodeId, hostname, load) {
     activeNode = nodeId;
+    activeHostname = hostname || '';
     document.getElementById('chat-title').textContent = nodeId;
-    document.getElementById('chat-subtitle').textContent = `${hostname} · carga ${load}`;
+    updateChatSubtitle(false);
     document.getElementById('msg-input').disabled = false;
     document.getElementById('send-btn').disabled = false;
     document.getElementById('back-btn').style.display = 'block'; // ← mostrar flecha
@@ -187,8 +219,8 @@
  
   let unread = {};      
   let readCount = {};  
-
-
+ 
+ 
   async function loadMessages() {
     if (!activeNode) return;
     const res = await fetch(`/messages/?target=${encodeURIComponent(activeNode)}`);
@@ -203,8 +235,8 @@
     unread[activeNode] = 0;
     if (allMessages.length !== prevCount) renderMessages();
   }
-
-
+ 
+ 
   function renderMessages() {
     const box = document.getElementById('chat-box');
     if (allMessages.length === 0) {
@@ -219,8 +251,8 @@
     `).join('');
     box.scrollTop = box.scrollHeight;
   }
-
-
+ 
+ 
  async function checkUnread() {
     const res = await fetch('/messages/');
     const data = await res.json();
@@ -242,33 +274,61 @@
       }
     });
   }
-
-
+ 
+ 
+  function notifyTyping() {
+    if (!activeNode) return;
+    if (!localTypingSent) {
+      localTypingSent = true;
+      sendSignal('typing', activeNode, { typing: true });
+    }
+    if (typingStopTimer) {
+      clearTimeout(typingStopTimer);
+    }
+    typingStopTimer = setTimeout(() => {
+      if (activeNode && localTypingSent) {
+        sendSignal('typing', activeNode, { typing: false });
+      }
+      localTypingSent = false;
+      typingStopTimer = null;
+    }, 900);
+  }
+ 
+ 
   setInterval(() => {
     checkUnread();
     loadNodes();
   }, nodePollPeriod);
-
+ 
   setInterval(() => {
     if (activeNode) loadMessages();
   }, messagePollPeriod);
-
+ 
   setInterval(() => {
     pollSignals();
   }, signalPollPeriod);
-
-
+ 
+ 
   async function sendMsg() {
     const input = document.getElementById('msg-input');
     const text = input.value.trim();
     if (!text || !activeNode) return;
-
-
+ 
+ 
     input.value = '';
+    if (typingStopTimer) {
+      clearTimeout(typingStopTimer);
+      typingStopTimer = null;
+    }
+    if (localTypingSent) {
+      sendSignal('typing', activeNode, { typing: false });
+      localTypingSent = false;
+    }
+    
     const res = await fetch(`/send/?target=${encodeURIComponent(activeNode)}&text=${encodeURIComponent(text)}`);
     const data = await res.json();
-
-
+ 
+ 
     if (!data.ok) {
       const box = document.getElementById('chat-box');
       const err = document.createElement('div');
@@ -280,34 +340,63 @@
     }
     loadMessages();
   }
-
-
+ 
+ 
   document.getElementById('msg-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') sendMsg();
   });
 
 
+  document.getElementById('msg-input').addEventListener('input', () => {
+    const text = document.getElementById('msg-input').value.trim();
+    if (!text) {
+      if (typingStopTimer) {
+        clearTimeout(typingStopTimer);
+        typingStopTimer = null;
+      }
+      if (localTypingSent && activeNode) {
+        sendSignal('typing', activeNode, { typing: false });
+      }
+      localTypingSent = false;
+      return;
+    }
+    notifyTyping();
+  });
+
+
+  document.getElementById('msg-input').addEventListener('blur', () => {
+    if (typingStopTimer) {
+      clearTimeout(typingStopTimer);
+      typingStopTimer = null;
+    }
+    if (localTypingSent && activeNode) {
+      sendSignal('typing', activeNode, { typing: false });
+    }
+    localTypingSent = false;
+  });
+ 
+ 
   function setCallStatus(text) {
     document.getElementById('call-status').textContent = text;
   }
-
-
+ 
+ 
   function updateCallButtons(active) {
     document.getElementById('start-call-btn').disabled = active;
     document.getElementById('hangup-btn').disabled = !active;
   }
-
-
+ 
+ 
   async function getLocalMedia() {
     if (localStream) return localStream;
-
-
+ 
+ 
     const getUserMedia = navigator.mediaDevices?.getUserMedia
       || navigator.getUserMedia
       || navigator.webkitGetUserMedia
       || navigator.mozGetUserMedia;
-
-
+ 
+ 
     if (!getUserMedia) {
       const message = 'Error cámara: getUserMedia no soportado en este navegador o contexto';
       console.error(message, navigator.mediaDevices);
@@ -315,8 +404,8 @@
       updateCallButtons(false);
       throw new Error(message);
     }
-
-
+ 
+ 
     try {
       if (navigator.mediaDevices?.getUserMedia) {
         localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
@@ -334,8 +423,8 @@
       throw err;
     }
   }
-
-
+ 
+ 
   function preferH264(pc) {
     const codecs = RTCRtpSender.getCapabilities('video')?.codecs || [];
     const h264Codecs = codecs.filter(c => c.mimeType.toLowerCase() === 'video/h264');
@@ -348,12 +437,12 @@
       }
     });
   }
-
-
+ 
+ 
   function createPeerConnection(targetNode) {
     const pc = new RTCPeerConnection({ iceServers });
-
-
+ 
+ 
     pc.ontrack = event => {
       const remoteVideo = document.getElementById('remote-video');
       const remoteStream = (event.streams && event.streams[0])
@@ -361,15 +450,15 @@
         : new MediaStream([event.track]);
       remoteVideo.srcObject = remoteStream;
     };
-
-
+ 
+ 
     pc.onicecandidate = event => {
       if (event.candidate) {
         sendSignal('candidate', targetNode, { candidate: event.candidate });
       }
     };
-
-
+ 
+ 
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === 'connected') {
         setCallStatus('Llamada activa con ' + targetNode);
@@ -379,12 +468,12 @@
         }
       }
     };
-
-
+ 
+ 
     return pc;
   }
-
-
+ 
+ 
   async function sendSignal(type, target, payload) {
     await fetch('/signal/send/', {
       method: 'POST',
@@ -399,26 +488,48 @@
       }),
     });
   }
-
-
+ 
+ 
   async function handleSignal(signal) {
     if (!signal) {
       return;
     }
 
 
+    if (signal.type === 'typing') {
+      if (signal.source !== activeNode) {
+        return;
+      }
+      const isTyping = !!(signal.payload && signal.payload.typing);
+      if (remoteTypingTimer) {
+        clearTimeout(remoteTypingTimer);
+        remoteTypingTimer = null;
+      }
+      if (isTyping) {
+        updateChatSubtitle(true);
+        remoteTypingTimer = setTimeout(() => {
+          updateChatSubtitle(false);
+          remoteTypingTimer = null;
+        }, 1800);
+      } else {
+        updateChatSubtitle(false);
+      }
+      return;
+    }
+ 
+ 
     if (signal.type === 'offer') {
       await answerCall(signal.payload, signal.source);
       return;
     }
-
-
+ 
+ 
     if (signal.type === 'answer' && peerConnection) {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.payload));
       return;
     }
-
-
+ 
+ 
     if (signal.type === 'candidate' && peerConnection) {
       try {
         await peerConnection.addIceCandidate(new RTCIceCandidate(signal.payload.candidate));
@@ -427,15 +538,15 @@
       }
     }
   }
-
-
+ 
+ 
   async function startCall() {
     if (!activeNode) {
       alert('Selecciona un nodo para iniciar la videollamada');
       return;
     }
-
-
+ 
+ 
     currentCallTarget = activeNode;
     setCallStatus('Llamando a ' + currentCallTarget + '...');
     try {
@@ -443,15 +554,15 @@
     } catch (err) {
       return;
     }
-
-
+ 
+ 
     peerConnection = createPeerConnection(currentCallTarget);
     localStream.getTracks().forEach(track => {
       peerConnection.addTrack(track, localStream);
     });
     preferH264(peerConnection);
-
-
+ 
+ 
     try {
       const offer = await peerConnection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: true });
       await peerConnection.setLocalDescription(offer);
@@ -463,8 +574,8 @@
       updateCallButtons(false);
     }
   }
-
-
+ 
+ 
   async function answerCall(offer, sourceId) {
     currentCallTarget = sourceId;
     setCallStatus('Recibiendo llamada de ' + sourceId);
@@ -473,13 +584,13 @@
     } catch (err) {
       return;
     }
-
-
+ 
+ 
     peerConnection = createPeerConnection(currentCallTarget);
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
     preferH264(peerConnection);
-
-
+ 
+ 
     try {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
       const answer = await peerConnection.createAnswer();
@@ -492,29 +603,29 @@
       updateCallButtons(false);
     }
   }
-
-
+ 
+ 
   async function hangupCall() {
     if (peerConnection) {
       peerConnection.close();
       peerConnection = null;
     }
-
-
+ 
+ 
     if (localStream) {
       localStream.getTracks().forEach(track => track.stop());
       localStream = null;
       document.getElementById('local-video').srcObject = null;
     }
-
-
+ 
+ 
     currentCallTarget = null;
     setCallStatus('No hay llamada activa');
     updateCallButtons(false);
     document.getElementById('remote-video').srcObject = null;
   }
-
-
+ 
+ 
   async function pollSignals() {
     try {
       const res = await fetch(`/signal/poll/?node_id=${encodeURIComponent(nodeId)}`);
@@ -528,8 +639,8 @@
       console.warn('Signal poll error', err);
     }
   }
-
-
+ 
+ 
   async function connectPeer() {
     const input = document.getElementById('peer-input');
     const peer = input.value.trim();
@@ -543,8 +654,8 @@
       alert('Error conectando: ' + (data.error || 'Desconocido'));
     }
   }
-
-
+ 
+ 
   loadNodes();
 </script>
 </body>
