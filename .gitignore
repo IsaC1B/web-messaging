@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+db.sqlite3
+
+# keys
+*.pem
+*.key
+network/keys/
+
+# entorno
+venv/
+.env
