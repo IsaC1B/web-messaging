@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat WebSocket</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        :root {
+            --bg:      #050509;
+            --bg2:     rgba(20,20,35,0.85);
+            --bg3:     rgba(255,255,255,0.04);
+            --accent:  #00f5d4;
+            --accent2: #9b5cff;
+            --priv:    #f59e0b;
+            --group:   #34d399;
+            --danger:  #ef4444;
+            --fg:      #e6f1ff;
+            --fgd:     #8a94a6;
+            --border:  rgba(255,255,255,0.08);
+            --r:       14px;
+            --sidebar: 260px;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: radial-gradient(circle at 20% 20%, rgba(0,245,212,0.07) 0%, transparent 40%),
+                        radial-gradient(circle at 80% 80%, rgba(155,92,255,0.07) 0%, transparent 40%),
+                        var(--bg);
+            color: var(--fg);
+            height: 100vh; overflow: hidden;
+        }
+
+        /* ── LOGIN ─────────────────────────────────── */
+        #login-screen {
+            display:flex; align-items:center; justify-content:center;
+            height:100vh;
+        }
+        .login-card {
+            backdrop-filter:blur(20px);
+            background:var(--bg3);
+            border:1px solid var(--border);
+            border-radius:20px;
+            padding:48px 40px;
+            width:400px; text-align:center;
+            box-shadow:0 0 40px rgba(0,245,212,0.08);
+        }
+        .login-icon { font-size:52px; margin-bottom:6px; }
+        .login-title {
+            font-size:26px; font-weight:700;
+            background:linear-gradient(135deg,var(--accent),var(--accent2));
+            -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+            margin-bottom:6px;
+        }
+        .login-sub { color:var(--fgd); font-size:12px; margin-bottom:28px; }
+        .input-group { margin-bottom:16px; text-align:left; }
+        .input-group label { display:block; font-size:12px; color:var(--fgd); margin-bottom:6px; }
+        .input-group input {
+            width:100%; padding:12px 14px; font-size:14px; font-family:monospace;
+            background:rgba(0,0,0,0.5); color:var(--accent);
+            border:1px solid var(--border); border-radius:8px; outline:none;
+            transition:border-color .2s, box-shadow .2s;
+        }
+        .input-group input:focus { border-color:var(--accent); box-shadow:0 0 10px rgba(0,245,212,0.25); }
+        .btn-connect {
+            width:100%; padding:13px; font-weight:600; font-size:14px; cursor:pointer;
+            background:linear-gradient(90deg,var(--accent),var(--accent2));
+            border:none; border-radius:10px; color:#000; letter-spacing:.5px;
+            transition:all .25s;
+        }
+        .btn-connect:hover { box-shadow:0 0 20px var(--accent); transform:scale(1.02); }
+        .btn-connect:disabled { opacity:.5; cursor:not-allowed; transform:none; }
+        .login-error { color:var(--danger); font-size:13px; margin-top:12px; min-height:20px; }
+
+        /* ── LAYOUT CHAT ────────────────────────────── */
+        #chat-screen { display:none; flex-direction:column; height:100vh; }
+
+        .chat-header {
+            display:flex; align-items:center; justify-content:space-between;
+            padding:0 20px; height:52px;
+            background:linear-gradient(90deg,#0f2027,#203a43,#2c5364);
+            border-bottom:1px solid var(--border); flex-shrink:0;
+        }
+        .chat-header h1 { font-size:17px; font-weight:600; }
+        .chat-header-right { display:flex; align-items:center; gap:12px; }
+        .latency-indicator {
+            font-size:11px; color:rgba(255,255,255,.6);
+            background:rgba(0,0,0,.2); padding:3px 10px; border-radius:20px;
+            min-width:50px; text-align:center; font-weight:600;
+        }
+        .latency-green { color:#2ecc71; }
+        .latency-orange { color:#f59e0b; }
+        .latency-red { color:#ef4444; }
+        .chat-header .hinfo { font-size:11px; color:rgba(255,255,255,.6);
+            background:rgba(0,0,0,.2); padding:3px 10px; border-radius:20px; }
+
+        .chat-body { display:flex; flex:1; overflow:hidden; }
+
+        /* ── SIDEBAR IZQUIERDO ──────────────────────── */
+        .sidebar {
+            width:var(--sidebar); flex-shrink:0;
+            background:var(--bg2); border-right:1px solid var(--border);
+            display:flex; flex-direction:column; overflow:hidden;
+        }
+
+        .sidebar-section { display:flex; flex-direction:column; border-bottom:1px solid var(--border); }
+        .sidebar-section:last-child { border-bottom:none; flex:1; overflow:hidden; }
+
+        .section-header {
+            display:flex; align-items:center; justify-content:space-between;
+            padding:12px 14px 8px;
+            font-size:11px; font-weight:600; color:var(--fgd); text-transform:uppercase; letter-spacing:.8px;
+        }
+        .section-header button {
+            font-size:18px; background:none; border:none; color:var(--accent);
+            cursor:pointer; line-height:1; padding:0; transition:transform .2s;
+        }
+        .section-header button:hover { transform:scale(1.2); }
+
+        .sidebar-list { padding:4px 8px 8px; display:flex; flex-direction:column; gap:2px;
+            overflow-y:auto; }
+        .sidebar-list::-webkit-scrollbar { width:4px; }
+        .sidebar-list::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+
+        .sidebar-item {
+            display:flex; align-items:center; gap:8px;
+            padding:7px 10px; border-radius:8px; font-size:13px; font-weight:500;
+            cursor:pointer; transition:background .15s;
+        }
+        .sidebar-item:hover { background:rgba(255,255,255,.06); }
+        .sidebar-item.active { background:rgba(0,245,212,.1); color:var(--accent); }
+        .sidebar-item .dot {
+            width:7px; height:7px; border-radius:50%; flex-shrink:0;
+            background:var(--accent); box-shadow:0 0 6px var(--accent);
+        }
+        .sidebar-item .dot.group-dot { background:var(--group); box-shadow:0 0 6px var(--group); }
+        .sidebar-item .you-tag { font-size:10px; color:var(--fgd); margin-left:auto; }
+        .sidebar-item .badge {
+            margin-left:auto; background:var(--priv); color:#000;
+            font-size:10px; font-weight:700; border-radius:10px; padding:1px 6px;
+        }
+        .sidebar-item .member-count { margin-left:auto; font-size:11px; color:var(--fgd); }
+
+        /* ── AREA PRINCIPAL ─────────────────────────── */
+        .main-area { flex:1; display:flex; flex-direction:column; overflow:hidden; }
+
+        .chat-tab-bar {
+            display:flex; gap:4px; padding:8px 16px 0;
+            background:var(--bg2); border-bottom:1px solid var(--border); flex-shrink:0;
+            overflow-x:auto;
+        }
+        .chat-tab-bar::-webkit-scrollbar { display:none; }
+
+        .tab {
+            display:flex; align-items:center; gap:6px;
+            padding:6px 14px; border-radius:8px 8px 0 0; font-size:13px; font-weight:500;
+            cursor:pointer; border:1px solid transparent; border-bottom:none;
+            transition:background .15s; white-space:nowrap;
+        }
+        .tab:hover { background:rgba(255,255,255,.05); }
+        .tab.active { background:var(--bg); border-color:var(--border); color:var(--fg); }
+        .tab .close-tab {
+            font-size:14px; color:var(--fgd); background:none; border:none; cursor:pointer;
+            padding:0 0 0 4px; line-height:1;
+        }
+        .tab .close-tab:hover { color:var(--danger); }
+        .tab .unread {
+            background:var(--priv); color:#000; border-radius:10px;
+            font-size:10px; font-weight:700; padding:1px 5px;
+        }
+
+        .chat-panels { flex:1; position:relative; overflow:hidden; }
+
+        .chat-panel {
+            position:absolute; inset:0;
+            display:none; flex-direction:column;
+        }
+        .chat-panel.active { display:flex; }
+
+        #messages-container, .panel-messages {
+            flex:1; overflow-y:auto; padding:20px;
+            display:flex; flex-direction:column; gap:10px;
+        }
+        #messages-container::-webkit-scrollbar,
+        .panel-messages::-webkit-scrollbar { width:5px; }
+        .panel-messages::-webkit-scrollbar-thumb,
+        #messages-container::-webkit-scrollbar-thumb { background:var(--border); border-radius:3px; }
+
+        .msg { animation: msgIn .25s ease; }
+        @keyframes msgIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+
+        .msg-system {
+            text-align:center; padding:4px 0;
+            color:var(--fgd); font-size:12px; font-style:italic;
+        }
+
+        .msg-chat {
+            padding:9px 13px; border-radius:12px;
+            background:rgba(255,255,255,.03); border:1px solid var(--border);
+            max-width:68%;
+        }
+        .msg-chat.own {
+            align-self:flex-end;
+            background:linear-gradient(135deg,rgba(155,92,255,.3),rgba(0,245,212,.2));
+            border-color:rgba(0,245,212,.2);
+        }
+        .msg-chat.private {
+            border-color:rgba(245,158,11,.3);
+            background:rgba(245,158,11,.06);
+        }
+        .msg-chat.private.own {
+            align-self:flex-end;
+            background:rgba(245,158,11,.12);
+        }
+        .msg-header { display:flex; align-items:baseline; gap:8px; margin-bottom:2px; }
+        .msg-username { font-weight:600; font-size:13px; color:#60a5fa; }
+        .msg-chat.own .msg-username { color:var(--accent); }
+        .msg-chat.private .msg-username { color:var(--priv); }
+        .msg-time { font-size:10px; color:var(--fgd); }
+        .msg-content { font-size:14px; line-height:1.5; color:var(--fg); }
+        .msg-badge {
+            font-size:10px; font-weight:600; padding:1px 7px; border-radius:20px;
+            background:rgba(245,158,11,.2); color:var(--priv); margin-left:auto;
+        }
+
+        /* ── INPUT BAR ──────────────────────────────── */
+        .input-bar {
+            display:flex; align-items:center; gap:10px;
+            padding:12px 16px;
+            background:var(--bg2); border-top:1px solid var(--border); flex-shrink:0;
+            flex-wrap:wrap;
+        }
+        .typing-indicator {
+            width:100%; font-size:11px; color:var(--accent); 
+            height:14px; overflow:hidden; white-space:nowrap;
+        }
+        .typing-pulse {
+            display:inline-block;
+            animation: typingBlink 1.4s infinite;
+        }
+        @keyframes typingBlink {
+            0%, 60%, 100% { opacity:.3; }
+            30% { opacity:1; }
+        }
+        .input-bar input {
+            flex:1; padding:11px 16px; font-size:14px; font-family:'Inter',sans-serif;
+            background:rgba(0,0,0,.4); color:var(--fg);
+            border:1px solid var(--border); border-radius:10px;
+            outline:none; transition:border-color .2s;
+            min-width:200px;
+        }
+        .input-bar input:focus { border-color:var(--accent2); }
+        .input-bar input::placeholder { color:var(--fgd); }
+        .btn-send {
+            padding:11px 20px; font-size:13px; font-weight:600; cursor:pointer;
+            background:linear-gradient(135deg,var(--accent),var(--accent2));
+            color:#000; border:none; border-radius:10px;
+            transition:transform .2s, box-shadow .2s;
+        }
+        .btn-send:hover { transform:translateY(-1px); box-shadow:0 4px 14px rgba(0,245,212,.3); }
+        .btn-send:active { transform:translateY(0); }
+
+        /* ── MODAL ──────────────────────────────────── */
+        .modal-overlay {
+            position:fixed; inset:0; background:rgba(0,0,0,.7);
+            display:none; align-items:center; justify-content:center; z-index:100;
+        }
+        .modal-overlay.show { display:flex; }
+        .modal {
+            background:#13132a; border:1px solid var(--border); border-radius:16px;
+            padding:28px; width:360px; max-width:90vw;
+        }
+        .modal h3 { font-size:18px; margin-bottom:16px; }
+        .modal input {
+            width:100%; padding:10px 14px; font-size:14px;
+            background:rgba(0,0,0,.5); color:var(--fg);
+            border:1px solid var(--border); border-radius:8px;
+            outline:none; margin-bottom:12px;
+        }
+        .modal input:focus { border-color:var(--accent); }
+        .modal-btns { display:flex; gap:10px; justify-content:flex-end; }
+        .modal-btns button {
+            padding:8px 18px; font-size:13px; font-weight:600; border:none;
+            border-radius:8px; cursor:pointer;
+        }
+        .btn-cancel { background:rgba(255,255,255,.08); color:var(--fg); }
+        .btn-ok { background:linear-gradient(90deg,var(--accent),var(--accent2)); color:#000; }
+        .modal-error { color:var(--danger); font-size:12px; margin-top:4px; }
+
+        /* ── TOAST ──────────────────────────────────── */
+        #toast {
+            position:fixed; bottom:24px; left:50%; transform:translateX(-50%) translateY(80px);
+            background:#1e1e3a; border:1px solid var(--border); border-radius:10px;
+            padding:10px 20px; font-size:13px; color:var(--fg);
+            transition:transform .3s ease; z-index:200;
+        }
+        #toast.show { transform:translateX(-50%) translateY(0); }
+
+        /* ── RESPONSIVE ─────────────────────────────── */
+        @media (max-width:700px) {
+            .sidebar { display:none; }
+            .login-card { width:90%; padding:32px 20px; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="login-screen">
+    <div class="login-card">
+        <div class="login-icon">💬</div>
+        <div class="login-title">Chat WebSocket</div>
+        <div class="login-sub">Servidor: {{ ws_url }}</div>
+        <div class="input-group">
+            <label for="username-input">Nombre de usuario</label>
+            <input type="text" id="username-input" placeholder="Ej: Jhon Doe"
+                   autocomplete="off" autofocus maxlength="30">
+        </div>
+        <button class="btn-connect" id="btn-connect" onclick="connectChat()">Conectarse</button>
+        <div class="login-error" id="login-error"></div>
+    </div>
+</div>
+
+<!-- CHAT -->
+<div id="chat-screen">
+    <div class="chat-header">
+        <h1> Chat WebSocket</h1>
+        <div class="chat-header-right">
+            <div class="latency-indicator" id="latency-indicator">📡 --ms</div>
+            <div class="hinfo" id="hinfo"></div>
+        </div>
+    </div>
+
+    <div class="chat-body">
+        <!-- SIDEBAR -->
+        <div class="sidebar">
+            <!-- Usuarios -->
+            <div class="sidebar-section" style="flex:0 0 auto; max-height:45%;">
+                <div class="section-header">
+                    <span> Usuarios <span id="user-count" style="color:var(--fg)"></span></span>
+                </div>
+                <div class="sidebar-list" id="users-list"></div>
+            </div>
+            <!-- Grupos -->
+            <div class="sidebar-section">
+                <div class="section-header">
+                    <span> Grupos</span>
+                    <button onclick="openCreateGroup()" title="Crear grupo">＋</button>
+                </div>
+                <div class="sidebar-list" id="groups-list"></div>
+            </div>
+        </div>
+
+        <!-- AREA PRINCIPAL -->
+        <div class="main-area">
+            <!-- Tabs -->
+            <div class="chat-tab-bar" id="tab-bar">
+                <div class="tab active" data-panel="general" onclick="switchTab('general')">
+                     General
+                </div>
+            </div>
+
+            <!-- Paneles de mensajes -->
+            <div class="chat-panels" id="chat-panels">
+                <div class="chat-panel active" id="panel-general">
+                    <div class="panel-messages" id="messages-general"></div>
+                </div>
+            </div>
+
+            <!-- Input -->
+            <div class="input-bar">
+                <div class="typing-indicator" id="typing-indicator"></div>
+                <input type="text" id="message-input"
+                       placeholder="Escribe un mensaje..." autocomplete="off" maxlength="1000">
+                <button class="btn-send" onclick="sendMessage()">Enviar ➤</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL: Crear grupo -->
+<div class="modal-overlay" id="modal-create-group">
+    <div class="modal">
+        <h3> Crear nuevo grupo</h3>
+        <input type="text" id="new-group-name" placeholder="Nombre del grupo" maxlength="40">
+        <div class="modal-error" id="create-group-error"></div>
+        <div class="modal-btns">
+            <button class="btn-cancel" onclick="closeModal('modal-create-group')">Cancelar</button>
+            <button class="btn-ok" onclick="createGroup()">Crear</button>
+        </div>
+    </div>
+</div>
+
+<!-- TOAST -->
+<div id="toast"></div>
+
+<script>
+const WS_URL = "{{ ws_url }}";
+let socket = null;
+let myUsername = "";
+let activeTab = "general";
+
+// Latencia y typing
+let lastPingTime = null;
+let latencyMs = 0;
+let typingUsers = new Set();
+let isTyping = false;
+let typingTimeout = null;
+
+// unread counts: {panelId: count}
+const unread = {};
+
+// panels existentes
+const openPanels = new Set(["general"]);
+
+// ── Conexión ────────────────────────────────────────────────────────────────
+function connectChat() {
+    const input = document.getElementById("username-input");
+    const error = document.getElementById("login-error");
+    const btn   = document.getElementById("btn-connect");
+
+    myUsername = input.value.trim();
+    if (!myUsername) { error.textContent = "⚠️ Ingresa un nombre de usuario"; return; }
+
+    btn.disabled = true; btn.textContent = "Conectando..."; error.textContent = "";
+
+    socket = new WebSocket(WS_URL);
+
+    socket.onopen = () => {
+        socket.send(JSON.stringify({ type: "join", username: myUsername }));
+        document.getElementById("login-screen").style.display = "none";
+        const cs = document.getElementById("chat-screen");
+        cs.style.display = "flex";
+        document.getElementById("hinfo").textContent = "🔗 " + WS_URL + "  —  " + myUsername;
+        document.getElementById("message-input").focus();
+        
+        // Iniciar ping periódico
+        startPingInterval();
+    };
+
+    socket.onmessage = e => handleMessage(JSON.parse(e.data));
+
+    socket.onclose = () => appendMsg("general", msgSystem(" Conexión cerrada"));
+
+    socket.onerror = () => {
+        error.textContent = "No se pudo conectar a " + WS_URL;
+        btn.disabled = false; btn.textContent = "Conectarse";
+    };
+}
+
+// ── Despacho de mensajes entrantes ─────────────────────────────────────────
+function handleMessage(data) {
+    switch(data.type) {
+        case "system":
+            // mensaje privado de bienvenida o del panel de contexto
+            if (data.group_name) {
+                appendMsg("group_" + data.group_name, msgSystem(data.content, data.timestamp));
+            } else {
+                appendMsg("general", msgSystem(data.content, data.timestamp));
+            }
+            break;
+
+        case "message":
+            if (data.chat_context === "group" && data.group_name) {
+                const pid = "group_" + data.group_name;
+                appendMsg(pid, msgChat(data, data.group_name));
+            } else {
+                appendMsg("general", msgChat(data));
+            }
+            break;
+
+        case "private_msg":
+            const partner = data.is_own ? data.target : data.sender;
+            const pid = "priv_" + partner;
+            if (!openPanels.has(pid)) openPrivateTab(partner);
+            appendMsg(pid, msgPrivate(data));
+            if (activeTab !== pid) bumpUnread(pid);
+            break;
+
+        case "user_list":
+            renderUserList(data.users);
+            break;
+
+        case "group_list":
+            renderGroupList(data.groups);
+            break;
+
+        case "group_joined":
+            ensureGroupPanel(data.group_name);
+            renderGroupMembers(data.group_name, data.members);
+            break;
+
+        case "group_left":
+            closeTab("group_" + data.group_name);
+            break;
+
+        case "group_members":
+            renderGroupMembers(data.group_name, data.members);
+            break;
+
+        case "error":
+            showToast("⚠️ " + data.content);
+            break;
+
+        case "typing":
+            handleTypingEvent(data);
+            break;
+
+        case "pong":
+            handlePongEvent(data);
+            break;
+    }
+}
+
+// ── Enviar mensaje ──────────────────────────────────────────────────────────
+function sendMessage() {
+    const input = document.getElementById("message-input");
+    const content = input.value.trim();
+    if (!content || !socket || socket.readyState !== WebSocket.OPEN) return;
+    input.value = "";
+
+    // Notificar que dejó de escribir
+    if (isTyping) {
+        socket.send(JSON.stringify({ type: "typing", is_typing: false }));
+        isTyping = false;
+    }
+    document.getElementById("typing-indicator").textContent = "";
+
+    if (activeTab === "general") {
+        socket.send(JSON.stringify({ type: "message", content }));
+    } else if (activeTab.startsWith("priv_")) {
+        const target = activeTab.slice(5);
+        socket.send(JSON.stringify({ type: "private_message", target, content }));
+    } else if (activeTab.startsWith("group_")) {
+        const group_name = activeTab.slice(6);
+        socket.send(JSON.stringify({ type: "group_message", group_name, content }));
+    }
+    input.focus();
+}
+
+// ── Tabs ───────────────────────────────────────────────────────────────────
+function switchTab(panelId) {
+    activeTab = panelId;
+    unread[panelId] = 0;
+
+    document.querySelectorAll(".tab").forEach(t => t.classList.toggle("active", t.dataset.panel === panelId));
+    document.querySelectorAll(".chat-panel").forEach(p => p.classList.toggle("active", p.id === "panel-" + panelId));
+
+    // actualizar badge del tab
+    const tab = document.querySelector(`.tab[data-panel="${panelId}"]`);
+    if (tab) { const b = tab.querySelector(".unread"); if (b) b.remove(); }
+
+    document.getElementById("message-input").focus();
+
+    // actualizar placeholder
+    let ph = "Escribe un mensaje...";
+    if (panelId.startsWith("priv_")) ph = "Mensaje privado a " + panelId.slice(5) + "...";
+    else if (panelId.startsWith("group_")) ph = "Mensaje al grupo " + panelId.slice(6) + "...";
+    document.getElementById("message-input").placeholder = ph;
+}
+
+function bumpUnread(panelId) {
+    unread[panelId] = (unread[panelId] || 0) + 1;
+    const tab = document.querySelector(`.tab[data-panel="${panelId}"]`);
+    if (!tab) return;
+    let b = tab.querySelector(".unread");
+    if (!b) { b = document.createElement("span"); b.className = "unread"; tab.appendChild(b); }
+    b.textContent = unread[panelId];
+}
+
+function closeTab(panelId) {
+    if (panelId === "general") return;
+    openPanels.delete(panelId);
+
+    const tab = document.querySelector(`.tab[data-panel="${panelId}"]`);
+    const panel = document.getElementById("panel-" + panelId);
+    if (tab) tab.remove();
+    if (panel) panel.remove();
+
+    if (activeTab === panelId) switchTab("general");
+}
+
+// ── Chats privados ──────────────────────────────────────────────────────────
+function openPrivateWith(username) {
+    if (username === myUsername) return;
+    const pid = "priv_" + username;
+    if (!openPanels.has(pid)) openPrivateTab(username);
+    switchTab(pid);
+}
+
+function openPrivateTab(username) {
+    const pid = "priv_" + username;
+    openPanels.add(pid);
+
+    // Tab
+    const tab = document.createElement("div");
+    tab.className = "tab"; tab.dataset.panel = pid;
+    tab.innerHTML = ` ${esc(username)} <button class="close-tab" onclick="closeTab('${pid}')">×</button>`;
+    tab.onclick = (e) => { if (!e.target.classList.contains("close-tab")) switchTab(pid); };
+    document.getElementById("tab-bar").appendChild(tab);
+
+    // Panel
+    const panel = document.createElement("div");
+    panel.className = "chat-panel"; panel.id = "panel-" + pid;
+    panel.innerHTML = `<div class="panel-messages" id="messages-${pid}"></div>`;
+    document.getElementById("chat-panels").appendChild(panel);
+}
+
+// ── Grupos ──────────────────────────────────────────────────────────────────
+function openCreateGroup() {
+    document.getElementById("new-group-name").value = "";
+    document.getElementById("create-group-error").textContent = "";
+    document.getElementById("modal-create-group").classList.add("show");
+    setTimeout(() => document.getElementById("new-group-name").focus(), 50);
+}
+
+function createGroup() {
+    const name = document.getElementById("new-group-name").value.trim();
+    if (!name) { document.getElementById("create-group-error").textContent = "El nombre no puede estar vacío."; return; }
+    socket.send(JSON.stringify({ type: "create_group", group_name: name }));
+    closeModal("modal-create-group");
+}
+
+function joinGroup(gname) {
+    socket.send(JSON.stringify({ type: "join_group", group_name: gname }));
+}
+
+function leaveGroup(gname) {
+    socket.send(JSON.stringify({ type: "leave_group", group_name: gname }));
+}
+
+function ensureGroupPanel(gname) {
+    const pid = "group_" + gname;
+    if (openPanels.has(pid)) return;
+    openPanels.add(pid);
+
+    const tab = document.createElement("div");
+    tab.className = "tab"; tab.dataset.panel = pid;
+    tab.innerHTML = ` ${esc(gname)} <button class="close-tab" onclick="leaveGroup('${gname}')">×</button>`;
+    tab.onclick = (e) => { if (!e.target.classList.contains("close-tab")) switchTab(pid); };
+    document.getElementById("tab-bar").appendChild(tab);
+
+    const panel = document.createElement("div");
+    panel.className = "chat-panel"; panel.id = "panel-" + pid;
+    panel.innerHTML = `<div class="panel-messages" id="messages-${pid}"></div>`;
+    document.getElementById("chat-panels").appendChild(panel);
+
+    switchTab(pid);
+}
+
+// ── Renderizado de listas ───────────────────────────────────────────────────
+function renderUserList(users) {
+    const list = document.getElementById("users-list");
+    const count = document.getElementById("user-count");
+    count.textContent = `(${users.length})`;
+    list.innerHTML = "";
+    users.sort().forEach(u => {
+        const div = document.createElement("div");
+        div.className = "sidebar-item" + (u === myUsername ? "" : "");
+        div.innerHTML = `<div class="dot"></div><span>${esc(u)}</span>`;
+        if (u === myUsername) {
+            div.innerHTML += `<span class="you-tag">tú</span>`;
+        } else {
+            div.title = "Chat privado con " + u;
+            div.onclick = () => openPrivateWith(u);
+            div.style.cursor = "pointer";
+        }
+        list.appendChild(div);
+    });
+}
+
+function renderGroupList(groupArr) {
+    const list = document.getElementById("groups-list");
+    list.innerHTML = "";
+    if (groupArr.length === 0) {
+        list.innerHTML = `<div style="padding:8px 10px; color:var(--fgd); font-size:12px; font-style:italic;">Sin grupos. Crea uno con ＋</div>`;
+        return;
+    }
+    groupArr.forEach(g => {
+        const pid = "group_" + g.name;
+        const isMember = openPanels.has(pid);
+        const div = document.createElement("div");
+        div.className = "sidebar-item" + (isMember ? " active" : "");
+        div.innerHTML = `<div class="dot group-dot"></div><span>${esc(g.name)}</span>
+            <span class="member-count">${g.count}</span>`;
+        div.title = isMember ? "Ir al grupo" : "Unirse al grupo";
+        div.onclick = () => {
+            if (isMember) switchTab(pid);
+            else joinGroup(g.name);
+        };
+        list.appendChild(div);
+    });
+}
+
+function renderGroupMembers(gname, members) {
+    // Actualizar count en sidebar
+    renderGroupList(Array.from(document.querySelectorAll(".sidebar-item.active")).map(el => ({
+        name: el.querySelector("span")?.textContent || "",
+        count: members.length,
+    })));
+}
+
+// ── Construcción de mensajes HTML ───────────────────────────────────────────
+function appendMsg(panelId, html) {
+    const container = document.getElementById("messages-" + panelId);
+    if (!container) return;
+    const div = document.createElement("div");
+    div.innerHTML = html;
+    container.appendChild(div.firstElementChild);
+    container.scrollTop = container.scrollHeight;
+
+    if (activeTab !== panelId) bumpUnread(panelId);
+}
+
+function msgSystem(content, ts) {
+    const t = ts ? `[${ts}] ` : "";
+    return `<div class="msg msg-system">${t}${esc(content)}</div>`;
+}
+
+function msgChat(data, groupName) {
+    const own = data.is_own;
+    return `<div class="msg msg-chat ${own ? "own" : ""}">
+        <div class="msg-header">
+            <span class="msg-username">${esc(data.username)}</span>
+            <span class="msg-time">${data.timestamp || ""}</span>
+        </div>
+        <div class="msg-content">${esc(data.content)}</div>
+    </div>`;
+}
+
+function msgPrivate(data) {
+    const own = data.is_own;
+    const label = own ? `→ ${esc(data.target)}` : `← ${esc(data.sender)}`;
+    return `<div class="msg msg-chat private ${own ? "own" : ""}">
+        <div class="msg-header">
+            <span class="msg-username">${label}</span>
+            <span class="msg-time">${data.timestamp || ""}</span>
+            <span class="msg-badge">🔒 privado</span>
+        </div>
+        <div class="msg-content">${esc(data.content)}</div>
+    </div>`;
+}
+
+// ── Modales / utils ─────────────────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).classList.add("show"); }
+function closeModal(id) { document.getElementById(id).classList.remove("show"); }
+
+function showToast(msg) {
+    const t = document.getElementById("toast");
+    t.textContent = msg; t.classList.add("show");
+    setTimeout(() => t.classList.remove("show"), 3000);
+}
+
+function esc(text) {
+    const m = {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"};
+    return String(text).replace(/[&<>"']/g, c => m[c]);
+}
+
+// ── Teclado ─────────────────────────────────────────────────────────────────
+document.addEventListener("keydown", e => {
+    if (e.key === "Enter") {
+        if (document.getElementById("login-screen").style.display !== "none") {
+            connectChat();
+        } else if (document.getElementById("modal-create-group").classList.contains("show")) {
+            createGroup();
+        } else {
+            sendMessage();
+        }
+    }
+    if (e.key === "Escape") {
+        document.querySelectorAll(".modal-overlay.show").forEach(m => m.classList.remove("show"));
+    }
+});
+
+// Detectar cuando el usuario está escribiendo
+document.addEventListener("keypress", e => {
+    if (e.target.id === "message-input" && socket && socket.readyState === WebSocket.OPEN) {
+        if (!isTyping) {
+            socket.send(JSON.stringify({ type: "typing", is_typing: true }));
+            isTyping = true;
+        }
+        // Reset typing timeout
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "typing", is_typing: false }));
+                isTyping = false;
+            }
+        }, 3000);
+    }
+});
+
+// ── Funciones de Latencia y Typing ──────────────────────────────────────────
+
+function startPingInterval() {
+    setInterval(() => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            lastPingTime = performance.now();
+            socket.send(JSON.stringify({ type: "ping", timestamp: lastPingTime }));
+        }
+    }, 3000);
+}
+
+function handlePongEvent(data) {
+    if (lastPingTime) {
+        latencyMs = Math.round(performance.now() - lastPingTime);
+        updateLatencyDisplay();
+    }
+}
+
+function updateLatencyDisplay() {
+    const indicator = document.getElementById("latency-indicator");
+    let className = "latency-green";
+    if (latencyMs >= 50 && latencyMs < 100) {
+        className = "latency-orange";
+    } else if (latencyMs >= 100) {
+        className = "latency-red";
+    }
+    indicator.textContent = "📡 " + latencyMs + "ms";
+    indicator.className = "latency-indicator " + className;
+}
+
+function handleTypingEvent(data) {
+    const username = data.username;
+    if (username === myUsername) return; // Ignorar nuestro propio evento
+    
+    if (data.is_typing) {
+        typingUsers.add(username);
+    } else {
+        typingUsers.delete(username);
+    }
+    updateTypingIndicator();
+}
+
+function updateTypingIndicator() {
+    const indicator = document.getElementById("typing-indicator");
+    if (typingUsers.size === 0) {
+        indicator.textContent = "";
+        return;
+    }
+    const users = Array.from(typingUsers).join(", ");
+    indicator.innerHTML = "✍️ <span class='typing-pulse'>" + users + " escribiendo...</span>";
+}
+
+// Detectar cuando el usuario está escribiendo
+document.addEventListener("keypress", e => {
+    if (e.target.id === "message-input" && socket && socket.readyState === WebSocket.OPEN) {
+        if (!isTyping) {
+            socket.send(JSON.stringify({ type: "typing", is_typing: true }));
+            isTyping = true;
+        }
+        // Reset typing timeout
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: "typing", is_typing: false }));
+                isTyping = false;
+            }
+        }, 3000);
+    }
+});
+</script>
+</body>
+</html>

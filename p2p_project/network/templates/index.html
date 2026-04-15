@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>P2P Node</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; display: flex; height: 100vh; overflow: hidden; background: #f5f5f3; color: #1a1a18; }
+    #sidebar { width: 240px; border-right: 1px solid #ddd; display: flex; flex-direction: column; background: #fff; }
+    #sidebar h2 { font-size: 13px; font-weight: 500; color: #888; padding: 16px; border-bottom: 1px solid #eee; }
+    #node-list { flex: 1; overflow-y: auto; }
+    .node-item { padding: 12px 16px; cursor: pointer; border-bottom: 1px solid #f0f0ee; transition: background .15s; }
+    .node-item:hover { background: #f5f5f3; }
+    .node-item.active { background: #e8f0fb; }
+    .node-item .nid { font-size: 13px; font-weight: 500; }
+    .node-item .nmeta { font-size: 11px; color: #888; margin-top: 2px; }
+    .node-item .badge { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 10px; background: #e1f5ee; color: #0f6e56; margin-top: 3px; }
+    #chat-panel { flex: 1; display: flex; flex-direction: column; }
+    #chat-header { padding: 16px 20px; border-bottom: 1px solid #eee; background: #fff; }
+    #chat-header h2 { font-size: 15px; font-weight: 500; }
+    #chat-header p { font-size: 12px; color: #888; margin-top: 2px; }
+    #chat-box { flex: 1; overflow-y: auto; padding: 16px 20px; display: flex; flex-direction: column; gap: 8px; }
+    .msg { max-width: 65%; padding: 8px 12px; border-radius: 10px; font-size: 14px; line-height: 1.5; }
+    .msg.sent { align-self: flex-end; background: #185FA5; color: #fff; border-bottom-right-radius: 3px; }
+    .msg.received { align-self: flex-start; background: #fff; border: 1px solid #e0e0de; border-bottom-left-radius: 3px; }
+    .msg .mmeta { font-size: 10px; opacity: .6; margin-bottom: 3px; }
+    .msg-error { align-self: center; font-size: 12px; color: #a32d2d; background: #fcebeb; padding: 6px 14px; border-radius: 20px; }
+    #chat-input-row { padding: 12px 16px; border-top: 1px solid #eee; background: #fff; display: flex; gap: 8px; }
+    #chat-input-row input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; }
+    #chat-input-row button { padding: 8px 18px; background: #185FA5; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
+    #chat-input-row button:hover { background: #0c447c; }
+    #my-id { padding: 12px 16px; font-size: 11px; color: #888; border-top: 1px solid #eee; }
+    #no-selection { flex: 1; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 14px; }
+    #chat-header { padding: 16px 20px; border-bottom: 1px solid #eee; background: #fff; display: flex; align-items: center; gap: 12px; }
+    #back-btn { display: none; cursor: pointer; padding: 4px 8px; border: none; background: none; font-size: 18px; color: #888; border-radius: 6px; line-height: 1; }
+    #back-btn:hover { background: #f0f0ee; color: #333; }
+    .node-item { position: relative; }
+    .notif-badge {
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      background: #a32d2d;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 500;
+      min-width: 18px;
+      height: 18px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 0 5px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="sidebar">
+  <h2>Nodos en la red</h2>
+  <div style="padding:16px;border-bottom:1px solid #eee;">
+    <input type="text" id="peer-input" placeholder="IP:puerto (ej: 192.168.1.100:12345)" style="width:100%;padding:8px;border:1px solid #ddd;border-radius:4px;margin-bottom:8px;" />
+    <button onclick="connectPeer()" style="width:100%;padding:8px;background:#185FA5;color:#fff;border:none;border-radius:4px;cursor:pointer;">Conectar a Peer</button>
+  </div>
+  <div id="node-list"></div>
+  <div id="my-id">Mi nodo: <strong>{{ node_id }}</strong></div>
+</div>
+
+<div id="chat-panel">
+  <div id="chat-header">
+    <button id="back-btn" onclick="clearSelection()">&#8592;</button>
+    <div>
+      <h2 id="chat-title">Selecciona un nodo</h2>
+      <p id="chat-subtitle">Haz clic en un nodo de la lista para chatear</p>
+    </div>
+  </div>  <!-- ← cierre de chat-header -->
+
+  <div id="chat-box">
+    <div id="no-selection">← Elige un nodo para iniciar una conversación</div>
+  </div>
+
+  <div id="chat-input-row">
+    <input type="text" id="msg-input" placeholder="Escribe un mensaje..." disabled />
+    <button id="send-btn" onclick="sendMsg()" disabled>Enviar</button>
+  </div>
+</div>  
+
+<script>
+  let activeNode = null;
+  let allMessages = [];
+
+  async function loadNodes() {
+    const res = await fetch('/nodes/');
+    const data = await res.json();
+    const list = document.getElementById('node-list');
+    const nodes = Object.values(data.nodes);
+
+    if (nodes.length === 0) {
+      list.innerHTML = '<div style="padding:16px;font-size:12px;color:#aaa;">Buscando nodos...</div>';
+      return;
+    }
+
+    list.innerHTML = nodes.map(n => `
+      <div class="node-item ${activeNode === n.node_id ? 'active' : ''}"
+          data-id="${n.node_id}"
+          data-host="${n.hostname || ''}"
+          data-load="${n.load || '?'}">
+        <div class="nid">${n.node_id}</div>
+        <div class="nmeta">${n.hostname || ''}</div>
+        <span class="badge">carga: ${n.load || '?'}</span>
+        ${n.discovered_via === 'multicast'
+          ? '<span class="badge" style="background:#faeeda;color:#854f0b;margin-left:4px;">Multicast</span>'
+          : ''}
+        ${(unread[n.node_id] || 0) > 0
+          ? `<div class="notif-badge">${unread[n.node_id]}</div>`
+          : ''}
+      </div>
+    `).join('');
+
+    document.querySelectorAll('.node-item').forEach(el => {
+      el.addEventListener('click', () => {
+        selectNode(el.dataset.id, el.dataset.host, el.dataset.load);
+      });
+    });
+  }
+
+  function clearSelection() {
+    activeNode = null;
+    document.getElementById('chat-title').textContent = 'Selecciona un nodo';
+    document.getElementById('chat-subtitle').textContent = 'Haz clic en un nodo de la lista para chatear';
+    document.getElementById('msg-input').disabled = true;
+    document.getElementById('send-btn').disabled = true;
+    document.getElementById('back-btn').style.display = 'none';
+    document.getElementById('chat-box').innerHTML =
+      '<div id="no-selection" style="flex:1;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:14px;">← Elige un nodo para iniciar una conversación</div>';
+    loadNodes();
+  }
+
+  function selectNode(nodeId, hostname, load) {
+    activeNode = nodeId;
+    document.getElementById('chat-title').textContent = nodeId;
+    document.getElementById('chat-subtitle').textContent = `${hostname} · carga ${load}`;
+    document.getElementById('msg-input').disabled = false;
+    document.getElementById('send-btn').disabled = false;
+    document.getElementById('back-btn').style.display = 'block'; // ← mostrar flecha
+    const noSel = document.getElementById('no-selection');
+    if (noSel) noSel.style.display = 'none';
+    loadNodes();
+    loadMessages();
+  }
+  
+  let unread = {};      
+  let readCount = {};   
+
+  async function loadMessages() {
+    if (!activeNode) return;
+    const res = await fetch(`/messages/?target=${encodeURIComponent(activeNode)}`);
+    const data = await res.json();
+    const prevCount = allMessages.length;
+    allMessages = data.messages;
+    // marcar todos los mensajes de este nodo como leídos
+    const receivedFromActive = data.messages.filter(
+      m => m.direction === 'received' && m.from === activeNode
+    ).length;
+    readCount[activeNode] = receivedFromActive;
+    unread[activeNode] = 0;
+    if (allMessages.length !== prevCount) renderMessages();
+  }
+
+  function renderMessages() {
+    const box = document.getElementById('chat-box');
+    if (allMessages.length === 0) {
+      box.innerHTML = '<div style="text-align:center;color:#aaa;font-size:13px;margin-top:40px;">Sin mensajes aún</div>';
+      return;
+    }
+    box.innerHTML = allMessages.map(m => `
+      <div class="msg ${m.direction}">
+        <div class="mmeta">${m.direction === 'sent' ? 'Tú → ' + m.to : m.from + ' → ti'}</div>
+        ${m.text}
+      </div>
+    `).join('');
+    box.scrollTop = box.scrollHeight;
+  }
+
+ async function checkUnread() {
+    const res = await fetch('/messages/');
+    const data = await res.json();
+    // agrupar mensajes recibidos por remitente
+    const receivedByNode = {};
+    data.messages.forEach(m => {
+      if (m.direction === 'received') {
+        if (!receivedByNode[m.from]) receivedByNode[m.from] = 0;
+        receivedByNode[m.from]++;
+      }
+    });
+    // calcular no leídos como diferencia entre total y ya leídos
+    Object.entries(receivedByNode).forEach(([nodeId, total]) => {
+      if (nodeId === activeNode) {
+        unread[nodeId] = 0;  
+      } else {
+        const alreadyRead = readCount[nodeId] || 0;
+        unread[nodeId] = Math.max(0, total - alreadyRead);
+      }
+    });
+  }
+
+  setInterval(() => {
+    checkUnread();
+    loadNodes();
+    if (activeNode) loadMessages();
+  }, 2000);
+
+  async function sendMsg() {
+    const input = document.getElementById('msg-input');
+    const text = input.value.trim();
+    if (!text || !activeNode) return;
+
+    input.value = '';
+    const res = await fetch(`/send/?target=${encodeURIComponent(activeNode)}&text=${encodeURIComponent(text)}`);
+    const data = await res.json();
+
+    if (!data.ok) {
+      const box = document.getElementById('chat-box');
+      const err = document.createElement('div');
+      err.className = 'msg-error';
+      err.textContent = data.error || 'Error al enviar';
+      box.appendChild(err);
+      box.scrollTop = box.scrollHeight;
+      return;
+    }
+    loadMessages();
+  }
+
+  document.getElementById('msg-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') sendMsg();
+  });
+
+  async function connectPeer() {
+    const input = document.getElementById('peer-input');
+    const peer = input.value.trim();
+    if (!peer) return;
+    const res = await fetch(`/connect/?peer=ws://${peer}`);
+    const data = await res.json();
+    if (data.ok) {
+      input.value = '';
+      loadNodes();
+    } else {
+      alert('Error conectando: ' + (data.error || 'Desconocido'));
+    }
+  }
+
+  // polling cada 2s
+  setInterval(() => {
+    loadNodes();
+    if (activeNode) loadMessages();
+  }, 2000);
+
+  loadNodes();
+</script>
+</body>
+</html>
