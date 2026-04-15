@@ -114,6 +114,8 @@
   let peerConnection = null;
   let currentCallTarget = null;
   const nodeId = "{{ node_id }}";
+  const messagePollPeriod = 350;
+  const nodePollPeriod = 2000;
   const signalPollPeriod = 1500;
   const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
 
@@ -245,9 +247,15 @@
   setInterval(() => {
     checkUnread();
     loadNodes();
-    pollSignals();
+  }, nodePollPeriod);
+
+  setInterval(() => {
     if (activeNode) loadMessages();
-  }, 2000);
+  }, messagePollPeriod);
+
+  setInterval(() => {
+    pollSignals();
+  }, signalPollPeriod);
 
 
   async function sendMsg() {
