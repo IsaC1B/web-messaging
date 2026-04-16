@@ -67,6 +67,17 @@
 <div id="chat-panel">
   <div id="chat-header">
     <button id="back-btn" onclick="clearSelection()">&#8592;</button>
+    <div style="flex:1;">
+      <h2 id="chat-title">Selecciona un nodo</h2>
+      <p id="chat-subtitle">Haz clic en un nodo de la lista para chatear</p>
+    </div>
+
+    <!-- BOTÓN DE LLAMADA -->
+    <button id="call-btn" onclick="startCall()" disabled style="padding:6px 12px;background:#0c8f4f;color:white;border:none;border-radius:6px;cursor:pointer;">
+      📞 Llamar
+    </button>
+  </div>
+    <button id="back-btn" onclick="clearSelection()">&#8592;</button>
     <div>
       <h2 id="chat-title">Selecciona un nodo</h2>
       <p id="chat-subtitle">Haz clic en un nodo de la lista para chatear</p>
@@ -76,6 +87,15 @@
   <div id="chat-box">
     <div id="no-selection">← Elige un nodo para iniciar una conversación</div>
   </div>
+
+<!-- VIDEOLLAMADA -->
+
+  <div id="video-container" style="display:none;padding:10px;border-top:1px solid #eee;background:#000;">
+    <video id="localVideo" autoplay muted playsinline style="width:150px;position:absolute;bottom:20px;right:20px;border-radius:8px;"></video>
+    <video id="remoteVideo" autoplay playsinline style="width:100%;max-height:300px;border-radius:8px;"></video>
+  </div>
+
+<!-- VIDEOLLAMADA -->
 
   <div id="chat-input-row">
     <input type="text" id="msg-input" placeholder="Escribe un mensaje..." disabled />
@@ -128,6 +148,7 @@
     document.getElementById('chat-subtitle').textContent = 'Haz clic en un nodo de la lista para chatear';
     document.getElementById('msg-input').disabled = true;
     document.getElementById('send-btn').disabled = true;
+    document.getElementById('call-btn').disabled = true;
     document.getElementById('back-btn').style.display = 'none';
     document.getElementById('chat-box').innerHTML =
       '<div id="no-selection" style="flex:1;display:flex;align-items:center;justify-content:center;color:#aaa;font-size:14px;">← Elige un nodo para iniciar una conversación</div>';
@@ -141,6 +162,7 @@
     document.getElementById('msg-input').disabled = false;
     document.getElementById('send-btn').disabled = false;
     document.getElementById('back-btn').style.display = 'block'; // ← mostrar flecha
+    document.getElementById('call-btn').disabled = false;
     const noSel = document.getElementById('no-selection');
     if (noSel) noSel.style.display = 'none';
     loadNodes();
@@ -254,6 +276,91 @@
   }, 2000);
 
   loadNodes();
+
+  // ================== VIDEOLLAMADA ==================
+  let localStream;
+  let peerConnection;
+  let socket;
+
+  const config = {
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }
+    ]
+  };
+
+  function getRoomId() {
+    return [ "{{ node_id }}", activeNode ].sort().join("_");
+  }
+
+  async function startCall() {
+    if (!activeNode) return;
+
+    document.getElementById("video-container").style.display = "block";
+
+    const roomId = getRoomId();
+
+    socket = new WebSocket(`ws://${window.location.host}/ws/call/${roomId}/`);
+
+    socket.onmessage = async (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === "offer") {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await peerConnection.createAnswer();
+        await peerConnection.setLocalDescription(answer);
+
+        socket.send(JSON.stringify({
+          type: "answer",
+          answer: answer
+        }));
+      }
+
+      if (data.type === "answer") {
+        await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
+      }
+
+      if (data.type === "ice") {
+        await peerConnection.addIceCandidate(data.candidate);
+      }
+    };
+
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
+      audio: true
+    });
+
+    document.getElementById("localVideo").srcObject = localStream;
+
+    peerConnection = new RTCPeerConnection(config);
+
+    localStream.getTracks().forEach(track => {
+      peerConnection.addTrack(track, localStream);
+    });
+
+    peerConnection.ontrack = event => {
+      document.getElementById("remoteVideo").srcObject = event.streams[0];
+    };
+
+    peerConnection.onicecandidate = event => {
+      if (event.candidate) {
+        socket.send(JSON.stringify({
+          type: "ice",
+          candidate: event.candidate
+        }));
+      }
+    };
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    socket.onopen = () => {
+      socket.send(JSON.stringify({
+        type: "offer",
+        offer: offer
+      }));
+    };
+  }
+
 </script>
 </body>
 </html>
