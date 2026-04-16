@@ -23,7 +23,7 @@
     .msg.sent { align-self: flex-end; background: #185FA5; color: #fff; border-bottom-right-radius: 3px; }
     .msg.received { align-self: flex-start; background: #fff; border: 1px solid #e0e0de; border-bottom-left-radius: 3px; }
     .msg .mmeta { font-size: 10px; opacity: .6; margin-bottom: 3px; }
-    .msg-error { align-self: center; font-size: 12px; color: #a32d2d; background: #fcebeb; padding: 6px 14px; border-radius: 20px; }
+    .msg-error { align-self: center; font-size: 12px; color: #3763aa; background: #fcebeb; padding: 6px 14px; border-radius: 20px; }
     #chat-input-row { padding: 12px 16px; border-top: 1px solid #eee; background: #fff; display: flex; gap: 8px; }
     #chat-input-row input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; outline: none; }
     #chat-input-row button { padding: 8px 18px; background: #185FA5; color: #fff; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; }
@@ -88,9 +88,11 @@
  
  
   <div id="video-section" style="padding:16px;border-top:1px solid #eee;background:#fafafa;">
-    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
       <button id="start-call-btn" onclick="startCall()" style="padding:8px 16px;background:#0f6e56;color:#fff;border:none;border-radius:8px;cursor:pointer;">Iniciar videollamada</button>
-      <button id="hangup-btn" onclick="hangupCall()" disabled style="padding:8px 16px;background:#a32d2d;color:#fff;border:none;border-radius:8px;cursor:pointer;">Colgar</button>
+      <button id="accept-call-btn" onclick="acceptIncomingCall()" style="padding:8px 16px;background:#0f6e56;color:#fff;border:none;border-radius:8px;cursor:pointer;display:none;">Aceptar videollamada</button>
+      <button id="reject-call-btn" onclick="rejectIncomingCall()" style="padding:8px 16px;background:#888;color:#fff;border:none;border-radius:8px;cursor:pointer;display:none;">Rechazar</button>
+      <button id="hangup-btn" onclick="hangupCall()" style="padding:8px 16px;background:#a32d2d;color:#fff;border:none;border-radius:8px;cursor:pointer;display:none;">Colgar</button>
       <span id="call-status" style="font-size:13px;color:#666;">No hay llamada activa</span>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -113,6 +115,8 @@
   let localStream = null;
   let peerConnection = null;
   let currentCallTarget = null;
+  let incomingOffer = null;
+  let incomingCallerNodeId = null;
   let activeHostname = '';
   let localTypingSent = false;
   let typingStopTimer = null;
@@ -201,6 +205,8 @@
     }
     subtitle.textContent = activeHostname || 'Conversacion activa';
   }
+
+
 
 
   function selectNode(nodeId, hostname, load) {
@@ -324,7 +330,7 @@
       sendSignal('typing', activeNode, { typing: false });
       localTypingSent = false;
     }
-    
+   
     const res = await fetch(`/send/?target=${encodeURIComponent(activeNode)}&text=${encodeURIComponent(text)}`);
     const data = await res.json();
  
@@ -347,6 +353,8 @@
   });
 
 
+
+
   document.getElementById('msg-input').addEventListener('input', () => {
     const text = document.getElementById('msg-input').value.trim();
     if (!text) {
@@ -362,6 +370,8 @@
     }
     notifyTyping();
   });
+
+
 
 
   document.getElementById('msg-input').addEventListener('blur', () => {
@@ -382,8 +392,32 @@
  
  
   function updateCallButtons(active) {
-    document.getElementById('start-call-btn').disabled = active;
-    document.getElementById('hangup-btn').disabled = !active;
+    if (active) {
+      document.getElementById('start-call-btn').style.display = 'none';
+      document.getElementById('accept-call-btn').style.display = 'none';
+      document.getElementById('reject-call-btn').style.display = 'none';
+      document.getElementById('hangup-btn').style.display = 'block';
+    } else {
+      document.getElementById('start-call-btn').style.display = 'block';
+      document.getElementById('accept-call-btn').style.display = 'none';
+      document.getElementById('reject-call-btn').style.display = 'none';
+      document.getElementById('hangup-btn').style.display = 'none';
+    }
+  }
+  
+  function showIncomingCallButtons(callerNodeId) {
+    document.getElementById('start-call-btn').style.display = 'none';
+    document.getElementById('accept-call-btn').style.display = 'block';
+    document.getElementById('reject-call-btn').style.display = 'block';
+    document.getElementById('hangup-btn').style.display = 'none';
+  }
+  
+  function hideIncomingCallButtons() {
+    document.getElementById('accept-call-btn').style.display = 'none';
+    document.getElementById('reject-call-btn').style.display = 'none';
+    if (!peerConnection || peerConnection.connectionState === 'closed') {
+      document.getElementById('start-call-btn').style.display = 'block';
+    }
   }
  
  
@@ -496,6 +530,8 @@
     }
 
 
+
+
     if (signal.type === 'typing') {
       if (signal.source !== activeNode) {
         return;
@@ -519,7 +555,10 @@
  
  
     if (signal.type === 'offer') {
-      await answerCall(signal.payload, signal.source);
+      incomingOffer = signal.payload;
+      incomingCallerNodeId = signal.source;
+      setCallStatus('Llamada entrante de ' + signal.source);
+      showIncomingCallButtons(signal.source);
       return;
     }
  
@@ -576,6 +615,55 @@
   }
  
  
+  async function acceptIncomingCall() {
+    if (!incomingOffer || !incomingCallerNodeId) {
+      setCallStatus('Error: no hay llamada entrante');
+      hideIncomingCallButtons();
+      return;
+    }
+    
+    currentCallTarget = incomingCallerNodeId;
+    setCallStatus('Aceptando llamada de ' + currentCallTarget);
+    
+    try {
+      await getLocalMedia();
+    } catch (err) {
+      hideIncomingCallButtons();
+      incomingOffer = null;
+      incomingCallerNodeId = null;
+      return;
+    }
+    
+    peerConnection = createPeerConnection(currentCallTarget);
+    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+    preferH264(peerConnection);
+    
+    try {
+      await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer));
+      const answer = await peerConnection.createAnswer();
+      await peerConnection.setLocalDescription(answer);
+      await sendSignal('answer', currentCallTarget, { type: answer.type, sdp: answer.sdp });
+      hideIncomingCallButtons();
+      incomingOffer = null;
+      incomingCallerNodeId = null;
+      updateCallButtons(true);
+    } catch (err) {
+      console.error('acceptIncomingCall error', err);
+      setCallStatus('Error respuesta: ' + (err.message || err.name));
+      hideIncomingCallButtons();
+      incomingOffer = null;
+      incomingCallerNodeId = null;
+      updateCallButtons(false);
+    }
+  }
+  
+  function rejectIncomingCall() {
+    incomingOffer = null;
+    incomingCallerNodeId = null;
+    setCallStatus('Llamada rechazada');
+    hideIncomingCallButtons();
+  }
+  
   async function answerCall(offer, sourceId) {
     currentCallTarget = sourceId;
     setCallStatus('Recibiendo llamada de ' + sourceId);
@@ -620,24 +708,13 @@
  
  
     currentCallTarget = null;
+    incomingOffer = null;
+    incomingCallerNodeId = null;
     setCallStatus('No hay llamada activa');
-    updateCallButtons(false);
-    document.getElementById('remote-video').srcObject = null;
-  }
- 
- 
-  async function pollSignals() {
-    try {
-      const res = await fetch(`/signal/poll/?node_id=${encodeURIComponent(nodeId)}`);
-      const data = await res.json();
-      if (Array.isArray(data.signals)) {
-        for (const signal of data.signals) {
-          await handleSignal(signal);
-        }
-      }
-    } catch (err) {
+
+    hideIncomingCallButtons();
       console.warn('Signal poll error', err);
-    }
+    
   }
  
  
@@ -654,7 +731,6 @@
       alert('Error conectando: ' + (data.error || 'Desconocido'));
     }
   }
- 
  
   loadNodes();
 </script>

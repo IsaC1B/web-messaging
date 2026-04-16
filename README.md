@@ -9,5 +9,3 @@ La segunda aplicación implementa un modelo cliente-servidor centralizado, donde
 Ambas soluciones han sido desarrolladas utilizando el lenguaje de programación Python y el framework web Django, incorporando tecnologías de comunicación en tiempo real mediante WebSockets, lo que permite una interacción eficiente y bidireccional entre los usuarios.
 
 El objetivo principal del proyecto es analizar, comparar y comprender las ventajas, limitaciones y casos de uso de cada arquitectura dentro del contexto de sistemas distribuidos.
-
-Para una explicación técnica más detallada del proyecto, revisa el manual de programador en [MANUAL_DESARROLLADOR.md](MANUAL_DESARROLLADOR.md).
