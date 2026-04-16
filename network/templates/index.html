@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -121,6 +122,7 @@
   let localTypingSent = false;
   let typingStopTimer = null;
   let remoteTypingTimer = null;
+  let pendingIceCandidates = [];
   const nodeId = "{{ node_id }}";
   const messagePollPeriod = 350;
   const nodePollPeriod = 2000;
@@ -205,6 +207,10 @@
     }
     subtitle.textContent = activeHostname || 'Conversacion activa';
   }
+
+
+
+
 
 
 
@@ -355,6 +361,10 @@
 
 
 
+
+
+
+
   document.getElementById('msg-input').addEventListener('input', () => {
     const text = document.getElementById('msg-input').value.trim();
     if (!text) {
@@ -370,6 +380,10 @@
     }
     notifyTyping();
   });
+
+
+
+
 
 
 
@@ -404,14 +418,14 @@
       document.getElementById('hangup-btn').style.display = 'none';
     }
   }
-  
+ 
   function showIncomingCallButtons(callerNodeId) {
     document.getElementById('start-call-btn').style.display = 'none';
     document.getElementById('accept-call-btn').style.display = 'block';
     document.getElementById('reject-call-btn').style.display = 'block';
     document.getElementById('hangup-btn').style.display = 'none';
   }
-  
+ 
   function hideIncomingCallButtons() {
     document.getElementById('accept-call-btn').style.display = 'none';
     document.getElementById('reject-call-btn').style.display = 'none';
@@ -522,12 +536,48 @@
       }),
     });
   }
+
+  async function pollSignals() {
+    if (!nodeId) return;
+
+    try {
+      const res = await fetch(`/signal/poll/?node_id=${encodeURIComponent(nodeId)}`);
+      if (!res.ok) {
+        throw new Error('Poll HTTP ' + res.status);
+      }
+      const data = await res.json();
+      const signals = Array.isArray(data.signals) ? data.signals : [];
+      for (const signal of signals) {
+        await handleSignal(signal);
+      }
+    } catch (err) {
+      console.warn('Signal poll error', err);
+    }
+  }
+
+  async function flushPendingIceCandidates() {
+    if (!peerConnection || !peerConnection.remoteDescription) {
+      return;
+    }
+    while (pendingIceCandidates.length > 0) {
+      const candidate = pendingIceCandidates.shift();
+      try {
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (err) {
+        console.warn('ICE candidate flush error', err);
+      }
+    }
+  }
  
  
   async function handleSignal(signal) {
     if (!signal) {
       return;
     }
+
+
+
+
 
 
 
@@ -555,6 +605,7 @@
  
  
     if (signal.type === 'offer') {
+      pendingIceCandidates = [];
       incomingOffer = signal.payload;
       incomingCallerNodeId = signal.source;
       setCallStatus('Llamada entrante de ' + signal.source);
@@ -565,13 +616,22 @@
  
     if (signal.type === 'answer' && peerConnection) {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.payload));
+      await flushPendingIceCandidates();
       return;
     }
  
  
-    if (signal.type === 'candidate' && peerConnection) {
+    if (signal.type === 'candidate') {
+      const candidate = signal.payload && signal.payload.candidate;
+      if (!candidate) {
+        return;
+      }
+      if (!peerConnection || !peerConnection.remoteDescription) {
+        pendingIceCandidates.push(candidate);
+        return;
+      }
       try {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(signal.payload.candidate));
+        await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
       } catch (err) {
         console.warn('ICE candidate error', err);
       }
@@ -587,6 +647,7 @@
  
  
     currentCallTarget = activeNode;
+    pendingIceCandidates = [];
     setCallStatus('Llamando a ' + currentCallTarget + '...');
     try {
       await getLocalMedia();
@@ -621,10 +682,10 @@
       hideIncomingCallButtons();
       return;
     }
-    
+   
     currentCallTarget = incomingCallerNodeId;
     setCallStatus('Aceptando llamada de ' + currentCallTarget);
-    
+   
     try {
       await getLocalMedia();
     } catch (err) {
@@ -633,13 +694,15 @@
       incomingCallerNodeId = null;
       return;
     }
-    
+   
     peerConnection = createPeerConnection(currentCallTarget);
+    pendingIceCandidates = pendingIceCandidates || [];
     localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
     preferH264(peerConnection);
-    
+   
     try {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(incomingOffer));
+      await flushPendingIceCandidates();
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
       await sendSignal('answer', currentCallTarget, { type: answer.type, sdp: answer.sdp });
@@ -656,16 +719,18 @@
       updateCallButtons(false);
     }
   }
-  
+ 
   function rejectIncomingCall() {
+    pendingIceCandidates = [];
     incomingOffer = null;
     incomingCallerNodeId = null;
     setCallStatus('Llamada rechazada');
     hideIncomingCallButtons();
   }
-  
+ 
   async function answerCall(offer, sourceId) {
     currentCallTarget = sourceId;
+    pendingIceCandidates = [];
     setCallStatus('Recibiendo llamada de ' + sourceId);
     try {
       await getLocalMedia();
@@ -681,6 +746,7 @@
  
     try {
       await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+      await flushPendingIceCandidates();
       const answer = await peerConnection.createAnswer();
       await peerConnection.setLocalDescription(answer);
       await sendSignal('answer', currentCallTarget, { type: answer.type, sdp: answer.sdp });
@@ -705,16 +771,17 @@
       localStream = null;
       document.getElementById('local-video').srcObject = null;
     }
+
+    pendingIceCandidates = [];
+    document.getElementById('remote-video').srcObject = null;
  
  
     currentCallTarget = null;
     incomingOffer = null;
     incomingCallerNodeId = null;
     setCallStatus('No hay llamada activa');
-
     hideIncomingCallButtons();
-      console.warn('Signal poll error', err);
-    
+    updateCallButtons(false);
   }
  
  
